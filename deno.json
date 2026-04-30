@@ -1,0 +1,13 @@
+{
+  "tasks": {
+    "start": "deno run --allow-net --allow-read --allow-env --allow-ffi --allow-sys src/main.ts",
+    "rebuild": "deno run --allow-net --allow-read --allow-env --allow-ffi --allow-sys src/main.ts --rebuild"
+  },
+  "imports": {
+    "@std/cli": "jsr:@std/cli@^1.0.29",
+    "mongodb": "npm:mongodb@^6.5.0",
+    "bullmq": "npm:bullmq@^5.7.0",
+    "ioredis": "npm:ioredis@^5.4.1",
+    "typesense": "npm:typesense@^1.8.2"
+  }
+}
