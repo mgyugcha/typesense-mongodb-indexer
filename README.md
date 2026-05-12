@@ -42,31 +42,192 @@ Change Streams.
    deno task start
    ```
 
-## Using Docker
+## Docker
 
-You can run the indexer securely isolated in a Docker container.
-
-### 1. Build the image
+### Build the image locally
 
 ```bash
 docker build -t typesense-mongodb-indexer .
 ```
 
-### 2. Run the container
+### Pull the image from GHCR
 
-You must mount your custom `config.ts` into the container at runtime.
+Pre-built images are available via GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/mgyugcha/typesense-mongodb-indexer:latest
+```
+
+### Run the container
+
+Mount your custom `config.ts` into the container at runtime:
 
 ```bash
 docker run -d \
   --name my-indexer \
   --network host \
   -v $(pwd)/config.ts:/app/config.ts \
-  typesense-mongodb-indexer
+  ghcr.io/mgyugcha/typesense-mongodb-indexer
 ```
 
 > Note: `--network host` is used here for simplicity if your
 > database/redis/typesense are on localhost. Adjust networking as needed for
 > your Docker setup.
+
+### Override the default command
+
+To run a one-off command instead (e.g., rebuild), pass it as the last argument:
+
+```bash
+docker run --rm \
+  -v $(pwd)/config.ts:/app/config.ts \
+  ghcr.io/mgyugcha/typesense-mongodb-indexer \
+  task rebuild
+```
+
+## Manual Build with GitHub Actions
+
+You can manually build and publish the Docker image to your GitHub Container
+Registry using the project's GitHub Actions workflow.
+
+1. Go to your repository on GitHub.
+2. Click the **Actions** tab.
+3. Select the **Build and Publish** workflow.
+4. Click **Run workflow**.
+5. Optionally enter a tag (e.g., `v1.0.0`) and click **Run workflow**.
+
+The workflow will build the image and push it to
+`ghcr.io/<your-username>/typesense-mongodb-indexer`.
+
+## Kubernetes Deployment
+
+### Prerequisites
+
+- A Kubernetes cluster (minikube, kind, or a cloud provider).
+- `kubectl` configured to communicate with your cluster.
+- The image published to GHCR (see [Manual Build](#manual-build-with-github-actions) above).
+
+### 1. Create the ConfigMap
+
+Create a ConfigMap from your `config.ts` file:
+
+```bash
+kubectl create configmap indexer-config --from-file=config.ts=./config.ts
+```
+
+All pods will mount this file at `/app/config.ts`.
+
+### 2. Deployment — CDC (continuous mode)
+
+The following Deployment runs the indexer in real-time CDC mode:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: typesense-indexer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: typesense-indexer
+  template:
+    metadata:
+      labels:
+        app: typesense-indexer
+    spec:
+      containers:
+        - name: indexer
+          image: ghcr.io/mgyugcha/typesense-mongodb-indexer:latest
+          args: ["task", "start"]
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.ts
+              subPath: config.ts
+          env:
+            - name: DEBUG
+              value: "false"
+      volumes:
+        - name: config
+          configMap:
+            name: indexer-config
+```
+
+Apply it:
+
+```bash
+kubectl apply -f deployment.yaml
+```
+
+### 3. Job — Rebuild (one-off)
+
+To rebuild all Typesense collections from MongoDB, run a one-off Job:
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: typesense-indexer-rebuild
+spec:
+  template:
+    spec:
+      containers:
+        - name: indexer
+          image: ghcr.io/mgyugcha/typesense-mongodb-indexer:latest
+          args: ["task", "rebuild"]
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.ts
+              subPath: config.ts
+      restartPolicy: Never
+      volumes:
+        - name: config
+          configMap:
+            name: indexer-config
+  backoffLimit: 2
+```
+
+Apply it:
+
+```bash
+kubectl apply -f job.yaml
+```
+
+The Job will exit once the rebuild completes successfully.
+
+### 4. Rebuild a specific collection
+
+Pass the `--collection` flag via `args` to rebuild only one collection:
+
+```yaml
+args: ["task", "rebuild", "--collection", "invoices"]
+```
+
+Or use the raw `deno run` command:
+
+```yaml
+args:
+  - run
+  - --allow-net
+  - --allow-read
+  - --allow-env
+  - --allow-ffi
+  - --allow-sys
+  - src/main.ts
+  - --rebuild
+  - --collection
+  - invoices
+```
+
+### Quick reference
+
+| Action | Command |
+|--------|---------|
+| Deploy CDC | `kubectl apply -f deployment.yaml` |
+| Scale down | `kubectl scale deployment typesense-indexer --replicas=0` |
+| View logs | `kubectl logs -l app=typesense-indexer` |
+| Run rebuild | `kubectl apply -f job.yaml` |
+| Delete job | `kubectl delete job typesense-indexer-rebuild` |
 
 ## Commands & Usage
 
