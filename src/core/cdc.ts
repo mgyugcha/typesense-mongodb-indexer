@@ -1,11 +1,11 @@
 import {
   ChangeStreamDeleteDocument,
   ChangeStreamUpdateDocument,
+  MongoClient,
 } from "mongodb";
 import {
   getCheckpoint,
   getCheckpointKey,
-  mongoClient,
   redisConn,
   saveCheckpoint,
 } from "../lib/db.ts";
@@ -14,10 +14,13 @@ import { applyTransform } from "../utils/transform.ts";
 import { debugLog } from "../utils/logger.ts";
 import { CollectionMapping } from "../types.ts";
 
-export async function startCDC(mapping: CollectionMapping) {
+export async function startCDC(
+  mapping: CollectionMapping,
+  client: MongoClient,
+) {
   console.log(`📡 [${mapping.mongoCollection}] Iniciando Change Stream...`);
 
-  const db = mongoClient.db(mapping.mongoDb);
+  const db = client.db(mapping.mongoDb);
   const collection = db.collection(mapping.mongoCollection);
 
   const resumeToken = await getCheckpoint(mapping);
@@ -44,7 +47,7 @@ export async function startCDC(mapping: CollectionMapping) {
         await syncQueue.add("cdc-upsert", {
           action: "upsert",
           data: transformed,
-          mappingName: mapping.typesenseCollection,
+          mappingName: mapping.schema.name,
         });
       } else if (change.operationType === "delete") {
         await syncQueue.add("cdc-delete", {
@@ -54,7 +57,7 @@ export async function startCDC(mapping: CollectionMapping) {
               change as ChangeStreamDeleteDocument
             ).documentKey._id.toString(),
           },
-          mappingName: mapping.typesenseCollection,
+          mappingName: mapping.schema.name,
         });
       }
 
@@ -90,7 +93,7 @@ export async function startCDC(mapping: CollectionMapping) {
         Deno.exit(1);
       }
     } else {
-      setTimeout(() => startCDC(mapping), 5000);
+      setTimeout(() => startCDC(mapping, client), 5000);
     }
   });
 }

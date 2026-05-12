@@ -6,20 +6,15 @@ export interface CollectionMapping {
   mongoDb: string;
   /** The MongoDB collection name */
   mongoCollection: string;
-  /** The Typesense collection name */
-  typesenseCollection: string;
   /** The Typesense collection schema */
   schema: CollectionCreateSchema;
   /** Direct fields to project and sync (optional) */
   fields?: string[];
   /** Custom transformation function (optional, overrides fields) */
-  transform?: (doc: Document) => Record<string, unknown>;
+  transform?: (doc: unknown) => Record<string, unknown>;
 }
 
 export interface IndexerConfig {
-  mongodb: {
-    uri: string;
-  };
   valkey: {
     host: string;
     port: number;
@@ -33,5 +28,8 @@ export interface IndexerConfig {
       protocol: string;
     }>;
   };
-  collections: CollectionMapping[];
+  mongodb: Array<{
+    uri: string;
+    collections: CollectionMapping[];
+  }>;
 }

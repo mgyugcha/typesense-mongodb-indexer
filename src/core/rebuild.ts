@@ -1,34 +1,30 @@
-import {
-  getCheckpointKey,
-  mongoClient,
-  redisConn,
-  typesense,
-} from "../lib/db.ts";
+import { getCheckpointKey, redisConn, typesense } from "../lib/db.ts";
 import { syncQueue } from "../lib/queue.ts";
 import { applyTransform } from "../utils/transform.ts";
 import { CollectionMapping } from "../types.ts";
-import { ObjectId } from "mongodb";
+import { MongoClient } from "mongodb";
 
-export async function runRebuild(mapping: CollectionMapping) {
+export async function runRebuild(
+  mapping: CollectionMapping,
+  client: MongoClient,
+) {
   console.log(`🚀 [${mapping.mongoCollection}] Iniciando Rebuild Masivo...`);
 
   try {
-    await typesense.collections(mapping.typesenseCollection).delete();
+    await typesense.collections(mapping.schema.name).delete();
   } catch {
     /* ignore */
   }
   await typesense.collections().create(mapping.schema);
 
-  const db = mongoClient.db(mapping.mongoDb);
+  const db = client.db(mapping.mongoDb);
   const collection = db.collection(mapping.mongoCollection);
 
   // Usamos proyección de MongoDB si se definieron campos para optimizar la lectura
   const projection = mapping.fields
     ? mapping.fields.reduce((acc, f) => ({ ...acc, [f]: 1 }), { _id: 1 })
     : {};
-  const cursor = collection.find({
-    business: new ObjectId("642c8d4104bf336820c6cbb7"),
-  }).project(projection);
+  const cursor = collection.find({}).project(projection);
 
   let count = 0;
   let batch: unknown[] = [];
@@ -44,7 +40,7 @@ export async function runRebuild(mapping: CollectionMapping) {
       await syncQueue.add("bulk-sync", {
         action: "upsert-bulk",
         data: batch,
-        mappingName: mapping.typesenseCollection,
+        mappingName: mapping.schema.name,
       });
       batch = [];
       console.log(
@@ -57,7 +53,7 @@ export async function runRebuild(mapping: CollectionMapping) {
     await syncQueue.add("bulk-sync", {
       action: "upsert-bulk",
       data: batch,
-      mappingName: mapping.typesenseCollection,
+      mappingName: mapping.schema.name,
     });
   }
 

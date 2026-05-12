@@ -7,45 +7,49 @@ export const worker = new Worker(
   "typesense-sync",
   async (job: Job) => {
     const { action, data, mappingName } = job.data;
-    const mapping = CONFIG.collections.find(
-      (c) => c.typesenseCollection === mappingName,
-    );
+    const mapping = CONFIG.mongodb
+      .flatMap((db) => db.collections)
+      .find((c) => c.schema.name === mappingName);
 
     if (!mapping) throw new Error(`Mapping no encontrado para: ${mappingName}`);
 
     try {
       if (action === "upsert") {
         debugLog(
-          `Worker ejecutando upsert en ${mapping.typesenseCollection}`,
+          `Worker ejecutando upsert en ${mapping.schema.name}`,
           data,
         );
         await typesense
-          .collections(mapping.typesenseCollection)
+          .collections(mapping.schema.name)
           .documents()
           .upsert(data);
       } else if (action === "upsert-bulk") {
         debugLog(
-          `Worker ejecutando upsert-bulk en ${mapping.typesenseCollection}. Cantidad: ${data.length}`,
+          `Worker ejecutando upsert-bulk en ${mapping.schema.name}. Cantidad: ${data.length}`,
         );
         await typesense
-          .collections(mapping.typesenseCollection)
+          .collections(mapping.schema.name)
           .documents()
           .import(data, { action: "upsert" });
       } else if (action === "delete") {
         debugLog(
-          `Worker ejecutando delete en ${mapping.typesenseCollection}`,
+          `Worker ejecutando delete en ${mapping.schema.name}`,
           data,
         );
         await typesense
-          .collections(mapping.typesenseCollection)
+          .collections(mapping.schema.name)
           .documents(data.id)
           .delete();
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error(
         `[Worker] Error en ${mappingName}:`,
-        (error as Error).message,
+        error.message,
       );
+      if (error.importResults) {
+        const failedDocs = error.importResults.filter((r: any) => !r.success);
+        console.error("Primeros 5 documentos fallidos:", JSON.stringify(failedDocs.slice(0, 5), null, 2));
+      }
       throw error;
     }
   },

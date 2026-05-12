@@ -1,6 +1,12 @@
 import { parseArgs } from "@std/cli/parse-args";
 import { CONFIG } from "../config.ts";
-import { mongoClient, redisConn } from "./lib/db.ts";
+import {
+  connectDatabases,
+  disconnectDatabases,
+  mongoClients,
+  redisConn,
+  typesense,
+} from "./lib/db.ts";
 import { syncQueue } from "./lib/queue.ts";
 import { worker } from "./lib/worker.ts";
 import { runRebuild } from "./core/rebuild.ts";
@@ -13,26 +19,54 @@ const flags = parseArgs(Deno.args, {
 
 async function main() {
   try {
-    await mongoClient.connect();
-    console.log("Connected to MongoDB");
+    await connectDatabases();
 
-    const targetCollections = flags.collection
-      ? CONFIG.collections.filter((c) => c.mongoCollection === flags.collection)
-      : CONFIG.collections;
+    let foundCollections = 0;
 
-    if (targetCollections.length === 0) {
-      console.error("No se encontraron colecciones para procesar.");
-      Deno.exit(1);
+    for (const dbConfig of CONFIG.mongodb) {
+      const client = mongoClients.get(dbConfig.uri);
+      if (!client) continue;
+
+      const targetCollections = flags.collection
+        ? dbConfig.collections.filter((c) =>
+          c.mongoCollection === flags.collection
+        )
+        : dbConfig.collections;
+
+      if (targetCollections.length === 0) continue;
+      foundCollections += targetCollections.length;
+
+      for (const mapping of targetCollections) {
+        let isNew = false;
+        try {
+          await typesense.collections(mapping.schema.name).retrieve();
+        } catch (error: any) {
+          if (error.httpStatus === 404) {
+            console.log(
+              `[Typesense] Colección ${mapping.schema.name} no existe. Se creará y sincronizará por primera vez...`,
+            );
+            isNew = true;
+          } else {
+            console.error(
+              `Error verificando colección en Typesense: ${mapping.schema.name}`,
+              error,
+            );
+          }
+        }
+
+        if (flags.rebuild || isNew) {
+          await runRebuild(mapping, client);
+        }
+
+        if (!flags.rebuild) {
+          startCDC(mapping, client);
+        }
+      }
     }
 
-    if (flags.rebuild) {
-      for (const mapping of targetCollections) {
-        await runRebuild(mapping);
-      }
-    } else {
-      for (const mapping of targetCollections) {
-        startCDC(mapping);
-      }
+    if (foundCollections === 0) {
+      console.error("No se encontraron colecciones para procesar.");
+      Deno.exit(1);
     }
 
     console.log("✅ Sistema en ejecución.");
@@ -52,7 +86,7 @@ async function shutdown() {
     await worker.close();
     await syncQueue.close();
     if (redisConn) await redisConn.quit();
-    await mongoClient.close();
+    await disconnectDatabases();
     console.log("✅ Apagado seguro completado. Saliendo...");
     Deno.exit(0);
   } catch (err) {
