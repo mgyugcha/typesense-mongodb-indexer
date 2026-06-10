@@ -1,0 +1,41 @@
+services:
+  mongodb-test:
+    image: mongo:7
+    command: ["--replSet", "rs0", "--oplogSize", "128"]
+    ports:
+      - "27018:27017"
+    healthcheck:
+      test: mongosh --eval "db.adminCommand('ping')"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  typesense-test:
+    image: typesense/typesense:27.0
+    ports:
+      - "8109:8108"
+    environment:
+      TYPESENSE_API_KEY: testkey
+      TYPESENSE_DATA_DIR: /data
+    volumes:
+      - typesense-data:/data
+    healthcheck:
+      test: curl -f http://localhost:8108/health || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis-test:
+    image: docker.io/redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: redis-cli ping
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  typesense-data:

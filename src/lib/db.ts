@@ -13,7 +13,12 @@ export const redisOptions = CONFIG.valkey?.host
   : null;
 
 export const redisConn = redisOptions ? new Redis(redisOptions) : null;
-export const typesense = new TypesenseClient(CONFIG.typesense);
+export const typesense = new TypesenseClient({
+  ...CONFIG.typesense,
+  connectionTimeoutSeconds: CONFIG.typesense.connectionTimeoutSeconds ?? 30,
+  numRetries: CONFIG.typesense.numRetries ?? 3,
+  retryIntervalSeconds: CONFIG.typesense.retryIntervalSeconds ?? 2,
+});
 
 export const mongoClients = new Map<string, MongoClient>();
 

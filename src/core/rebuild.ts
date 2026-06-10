@@ -1,4 +1,4 @@
-import { getCheckpointKey, redisConn, typesense } from "../lib/db.ts";
+import { typesense } from "../lib/db.ts";
 import { syncQueue } from "../lib/queue.ts";
 import { applyTransform } from "../utils/transform.ts";
 import { CollectionMapping } from "../types.ts";
@@ -20,11 +20,10 @@ export async function runRebuild(
   const db = client.db(mapping.mongoDb);
   const collection = db.collection(mapping.mongoCollection);
 
-  // Usamos proyección de MongoDB si se definieron campos para optimizar la lectura
   const projection = mapping.fields
     ? mapping.fields.reduce((acc, f) => ({ ...acc, [f]: 1 }), { _id: 1 })
     : {};
-  const cursor = collection.find({}).project(projection);
+  const cursor = collection.find({}, { readConcern: { level: "majority" } }).project(projection);
 
   let count = 0;
   let batch: unknown[] = [];
@@ -57,8 +56,7 @@ export async function runRebuild(
     });
   }
 
-  if (redisConn) await redisConn.del(getCheckpointKey(mapping));
   console.log(
-    `✅ [${mapping.mongoCollection}] Finalizado. ${count} docs encolados.`,
+    `✅ [${mapping.mongoCollection}] Finalizado. ${count} docs encolados al worker.`,
   );
 }

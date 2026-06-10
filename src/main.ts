@@ -1,4 +1,5 @@
 import { parseArgs } from "@std/cli/parse-args";
+import type { Worker } from "bullmq";
 import { CONFIG } from "../config.ts";
 import {
   connectDatabases,
@@ -8,7 +9,8 @@ import {
   typesense,
 } from "./lib/db.ts";
 import { syncQueue } from "./lib/queue.ts";
-import { worker } from "./lib/worker.ts";
+import { createWorker } from "./lib/worker.ts";
+import { startHttpServer } from "./lib/http.ts";
 import { runRebuild } from "./core/rebuild.ts";
 import { startCDC } from "./core/cdc.ts";
 
@@ -17,10 +19,13 @@ const flags = parseArgs(Deno.args, {
   string: ["collection"],
 });
 
+let worker: Worker | null = null;
+
 async function main() {
   try {
     await connectDatabases();
 
+    worker = createWorker();
     let foundCollections = 0;
 
     for (const dbConfig of CONFIG.mongodb) {
@@ -58,9 +63,7 @@ async function main() {
           await runRebuild(mapping, client);
         }
 
-        if (!flags.rebuild) {
-          startCDC(mapping, client);
-        }
+        startCDC(mapping, client);
       }
     }
 
@@ -69,6 +72,7 @@ async function main() {
       Deno.exit(1);
     }
 
+    startHttpServer();
     console.log("✅ Sistema en ejecución.");
   } catch (error) {
     console.error("❌ Error fatal:", error);
@@ -83,7 +87,7 @@ async function shutdown() {
   console.log("\n🛑 Iniciando apagado seguro...");
 
   try {
-    await worker.close();
+    if (worker) await worker.close();
     await syncQueue.close();
     if (redisConn) await redisConn.quit();
     await disconnectDatabases();

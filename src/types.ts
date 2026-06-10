@@ -27,9 +27,16 @@ export interface IndexerConfig {
       port: number;
       protocol: string;
     }>;
+    connectionTimeoutSeconds?: number;
+    numRetries?: number;
+    retryIntervalSeconds?: number;
   };
   mongodb: Array<{
     uri: string;
     collections: CollectionMapping[];
   }>;
+  http?: {
+    port: number;
+    host?: string;
+  };
 }

@@ -1,8 +1,4 @@
-import {
-  ChangeStreamDeleteDocument,
-  ChangeStreamUpdateDocument,
-  MongoClient,
-} from "mongodb";
+import { ChangeStream, MongoClient, ResumeToken } from "mongodb";
 import {
   getCheckpoint,
   getCheckpointKey,
@@ -17,7 +13,7 @@ import { CollectionMapping } from "../types.ts";
 export async function startCDC(
   mapping: CollectionMapping,
   client: MongoClient,
-) {
+): Promise<ChangeStream> {
   console.log(`📡 [${mapping.mongoCollection}] Iniciando Change Stream...`);
 
   const db = client.db(mapping.mongoDb);
@@ -30,38 +26,76 @@ export async function startCDC(
 
   const changeStream = collection.watch([], options);
 
-  changeStream.on("change", async (change) => {
-    const resumeToken = change._id;
+  const batchBuffer: Record<string, unknown>[] = [];
+  let batchTimer: number | null = null;
+  let lastResumeToken: ResumeToken | null = null;
+
+  async function flushBuffer() {
+    const batch = batchBuffer.splice(0);
+    batchTimer = null;
+    if (batch.length === 0) return;
 
     try {
-      if (["insert", "update", "replace"].includes(change.operationType)) {
-        if (change.operationType === "update") {
-          debugLog(
-            `CDC detectó UPDATE en ${mapping.mongoCollection}. Campos modificados:`,
-            (change as ChangeStreamUpdateDocument).updateDescription,
-          );
+      debugLog(
+        `CDC flush: ${batch.length} documentos en lote para ${mapping.mongoCollection}`,
+      );
+      await syncQueue.add("bulk-sync", {
+        action: "upsert-bulk",
+        data: batch,
+        mappingName: mapping.schema.name,
+      });
+      if (lastResumeToken) {
+        await saveCheckpoint(mapping, lastResumeToken);
+      }
+    } catch (error) {
+      console.error(
+        `[CDC] Error al encolar lote en ${mapping.mongoCollection}:`,
+        (error as Error).message,
+      );
+    }
+  }
+
+  function scheduleFlush() {
+    if (batchBuffer.length >= 50) {
+      if (batchTimer) clearTimeout(batchTimer);
+      batchTimer = null;
+      flushBuffer();
+    } else if (!batchTimer) {
+      batchTimer = setTimeout(() => flushBuffer(), 500);
+    }
+  }
+
+  changeStream.on("change", (change) => {
+    lastResumeToken = change._id;
+
+    try {
+      if (
+        change.operationType === "insert" || change.operationType === "replace"
+      ) {
+        const transformed = applyTransform(mapping, change.fullDocument!);
+        batchBuffer.push(transformed);
+        scheduleFlush();
+      } else if (change.operationType === "update") {
+        if (change.fullDocument) {
+          const transformed = applyTransform(mapping, change.fullDocument);
+          batchBuffer.push(transformed);
+          scheduleFlush();
         }
-        const fullDoc = (change as ChangeStreamUpdateDocument).fullDocument;
-        const transformed = applyTransform(mapping, fullDoc!);
-        debugLog(`CDC transformó documento. Encolando a BullMQ:`, transformed);
-        await syncQueue.add("cdc-upsert", {
-          action: "upsert",
-          data: transformed,
-          mappingName: mapping.schema.name,
-        });
       } else if (change.operationType === "delete") {
-        await syncQueue.add("cdc-delete", {
+        if (batchBuffer.length > 0) {
+          if (batchTimer) clearTimeout(batchTimer);
+          batchTimer = null;
+          flushBuffer();
+        }
+        syncQueue.add("cdc-delete", {
           action: "delete",
           data: {
-            id: (
-              change as ChangeStreamDeleteDocument
-            ).documentKey._id.toString(),
+            id: change.documentKey._id.toString(),
           },
           mappingName: mapping.schema.name,
         });
+        saveCheckpoint(mapping, lastResumeToken);
       }
-
-      await saveCheckpoint(mapping, resumeToken);
     } catch (error) {
       console.error(
         `[CDC] Error en ${mapping.mongoCollection}:`,
@@ -73,7 +107,6 @@ export async function startCDC(
   changeStream.on("error", (error: Error & { code: number }) => {
     console.error(`[CDC] Error en ${mapping.mongoCollection}:`, error);
 
-    // Errores comunes si el oplog ha rotado y el resumeToken es muy antiguo o la historia se perdió
     const isHistoryLost = error.code === 136 ||
       error.message?.includes("resume") ||
       error.message?.includes("ChangeStreamHistoryLost");
@@ -86,7 +119,6 @@ export async function startCDC(
         `💡 Solución: Debes ejecutar el indexador con la bandera --rebuild para resincronizar la base de datos completa.`,
       );
 
-      // Limpiamos el checkpoint dañado y salimos para no entrar en un bucle infinito
       if (redisConn) {
         redisConn.del(getCheckpointKey(mapping)).then(() => Deno.exit(1));
       } else {
@@ -96,4 +128,6 @@ export async function startCDC(
       setTimeout(() => startCDC(mapping, client), 5000);
     }
   });
+
+  return changeStream;
 }
