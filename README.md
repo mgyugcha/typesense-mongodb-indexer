@@ -221,13 +221,13 @@ args:
 
 ### Quick reference
 
-| Action | Command |
-|--------|---------|
-| Deploy CDC | `kubectl apply -f deployment.yaml` |
-| Scale down | `kubectl scale deployment typesense-indexer --replicas=0` |
-| View logs | `kubectl logs -l app=typesense-indexer` |
-| Run rebuild | `kubectl apply -f job.yaml` |
-| Delete job | `kubectl delete job typesense-indexer-rebuild` |
+| Action      | Command                                                   |
+| ----------- | --------------------------------------------------------- |
+| Deploy CDC  | `kubectl apply -f deployment.yaml`                        |
+| Scale down  | `kubectl scale deployment typesense-indexer --replicas=0` |
+| View logs   | `kubectl logs -l app=typesense-indexer`                   |
+| Run rebuild | `kubectl apply -f job.yaml`                               |
+| Delete job  | `kubectl delete job typesense-indexer-rebuild`            |
 
 ## Commands & Usage
 
