@@ -22,7 +22,7 @@ Deno.test({
     await connect();
     closeChangeStream();
     await cleanQueue();
-    const worker = getWorker();
+    const worker = await getWorker();
 
     const dbConfig = CONFIG.mongodb[0];
     const mapping = dbConfig.collections[0];
@@ -64,7 +64,7 @@ Deno.test({
     await connect();
     closeChangeStream();
     await cleanQueue();
-    const worker = getWorker();
+    const worker = await getWorker();
 
     const dbConfig = CONFIG.mongodb[0];
     const mapping = dbConfig.collections[0];
@@ -115,7 +115,7 @@ Deno.test({
     await connect();
     closeChangeStream();
     await cleanQueue();
-    const worker = getWorker();
+    const worker = await getWorker();
 
     const dbConfig = CONFIG.mongodb[0];
     const mapping = dbConfig.collections[0];

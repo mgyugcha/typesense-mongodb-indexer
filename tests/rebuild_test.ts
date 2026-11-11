@@ -10,7 +10,7 @@ Deno.test({
   async fn() {
     await connect();
     await cleanQueue();
-    const worker = getWorker();
+    const worker = await getWorker();
 
     const dbConfig = CONFIG.mongodb[0];
     const mapping = dbConfig.collections[0];

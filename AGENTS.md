@@ -39,7 +39,7 @@ main.ts → connectDatabases → [rebuild if --rebuild] → startCDC per collect
 - **src/core/cdc.ts**: MongoDB Change Stream → batch buffer (50 docs or 500ms) → BullMQ queue
 - **src/core/rebuild.ts**: Drop Typesense collection → recreate schema → find all docs → queue batches of 500
 - **src/core/reindex.ts**: Same as rebuild but filtered by date range or ObjectId range
-- **src/lib/worker.ts**: BullMQ worker (concurrency: 5) — consumes `typesense-sync` queue
+- **src/lib/worker.ts**: BullMQ worker (global concurrency: 1) — consumes `typesense-sync`, reloading MongoDB documents on every upsert attempt
 - **src/lib/http.ts**: `Deno.serve` on port 3131 — endpoints: `/health`, `/ready`, `/queue`, `/rebuild` POST, `/reindex` POST
 - **src/lib/db.ts**: MongoDB connections tracked in `Map<string, MongoClient>`; checkpoints in Redis key `checkpoint:<db>:<collection>`
 
@@ -50,6 +50,7 @@ main.ts → connectDatabases → [rebuild if --rebuild] → startCDC per collect
 - `transform` function in config maps MongoDB → Typesense document shape
 - BullMQ default: 5 retries, exponential backoff
 - Queue jobs: `upsert` (single), `upsert-bulk` (array via import), `delete` (by id)
+- Upsert jobs carry original MongoDB `_id` values in `sourceIds`, encoded as canonical Extended JSON strings; transformed Typesense IDs are independent.
 - Imports: `npm:mongodb@^6`, `npm:bullmq@^5`, `npm:ioredis@^5`, `npm:typesense@^1`, `jsr:@std/cli`, `jsr:@std/assert`
 
 ## Editor

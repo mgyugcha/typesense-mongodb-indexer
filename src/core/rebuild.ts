@@ -1,8 +1,7 @@
 import { typesense } from "../lib/db.ts";
 import { syncQueue } from "../lib/queue.ts";
-import { applyTransform } from "../utils/transform.ts";
 import { CollectionMapping } from "../types.ts";
-import { MongoClient } from "mongodb";
+import { BSON, MongoClient } from "mongodb";
 
 export async function runRebuild(
   mapping: CollectionMapping,
@@ -20,25 +19,22 @@ export async function runRebuild(
   const db = client.db(mapping.mongoDb);
   const collection = db.collection(mapping.mongoCollection);
 
-  const projection = mapping.fields
-    ? mapping.fields.reduce((acc, f) => ({ ...acc, [f]: 1 }), { _id: 1 })
-    : {};
-  const cursor = collection.find({}, { readConcern: { level: "majority" } }).project(projection);
+  const cursor = collection.find({}, { readConcern: { level: "majority" } })
+    .project({ _id: 1 });
 
   let count = 0;
-  let batch: unknown[] = [];
+  let batch: string[] = [];
   const BATCH_SIZE = 500;
 
   while (await cursor.hasNext()) {
     const doc = await cursor.next();
-    const transformed = applyTransform(mapping, doc!);
-    batch.push(transformed);
+    batch.push(BSON.EJSON.stringify(doc!._id, { relaxed: false }));
     count++;
 
     if (batch.length >= BATCH_SIZE) {
       await syncQueue.add("bulk-sync", {
         action: "upsert-bulk",
-        data: batch,
+        sourceIds: batch,
         mappingName: mapping.schema.name,
       });
       batch = [];
@@ -51,7 +47,7 @@ export async function runRebuild(
   if (batch.length > 0) {
     await syncQueue.add("bulk-sync", {
       action: "upsert-bulk",
-      data: batch,
+      sourceIds: batch,
       mappingName: mapping.schema.name,
     });
   }

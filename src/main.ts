@@ -25,7 +25,7 @@ async function main() {
   try {
     await connectDatabases();
 
-    worker = createWorker();
+    worker = await createWorker();
     let foundCollections = 0;
 
     for (const dbConfig of CONFIG.mongodb) {

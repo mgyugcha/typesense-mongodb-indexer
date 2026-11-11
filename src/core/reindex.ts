@@ -1,6 +1,5 @@
-import { MongoClient, ObjectId } from "mongodb";
+import { BSON, MongoClient, ObjectId } from "mongodb";
 import { syncQueue } from "../lib/queue.ts";
-import { applyTransform } from "../utils/transform.ts";
 import { CollectionMapping } from "../types.ts";
 
 export interface ReindexOptions {
@@ -34,43 +33,52 @@ export async function runReindex(
     const from = parseEcuadorDate(options.fromDate);
     query.issueDate = { $gte: from };
     if (options.toDate) {
-      (query.issueDate as Record<string, unknown>).$lte = parseEcuadorDate(options.toDate);
+      (query.issueDate as Record<string, unknown>).$lte = parseEcuadorDate(
+        options.toDate,
+      );
     }
   }
 
-  console.log(`[Reindex] ${mapping.mongoCollection}: leyendo documentos con filtro`, JSON.stringify(query));
+  console.log(
+    `[Reindex] ${mapping.mongoCollection}: leyendo documentos con filtro`,
+    JSON.stringify(query),
+  );
 
-  const cursor = collection.find(query, { readConcern: { level: "majority" } });
+  const cursor = collection.find(query, { readConcern: { level: "majority" } })
+    .project({ _id: 1 });
 
   let count = 0;
-  let batch: unknown[] = [];
+  let batch: string[] = [];
   const BATCH_SIZE = 500;
 
   while (await cursor.hasNext()) {
     const doc = await cursor.next();
-    const transformed = applyTransform(mapping, doc!);
-    batch.push(transformed);
+    batch.push(BSON.EJSON.stringify(doc!._id, { relaxed: false }));
     count++;
 
     if (batch.length >= BATCH_SIZE) {
       await syncQueue.add("bulk-sync", {
         action: "upsert-bulk",
-        data: batch,
+        sourceIds: batch,
         mappingName: mapping.schema.name,
       });
       batch = [];
-      console.log(`[Reindex] ${mapping.mongoCollection}: ${count} documentos encolados...`);
+      console.log(
+        `[Reindex] ${mapping.mongoCollection}: ${count} documentos encolados...`,
+      );
     }
   }
 
   if (batch.length > 0) {
     await syncQueue.add("bulk-sync", {
       action: "upsert-bulk",
-      data: batch,
+      sourceIds: batch,
       mappingName: mapping.schema.name,
     });
   }
 
-  console.log(`[Reindex] ${mapping.mongoCollection}: finalizado. ${count} docs encolados.`);
+  console.log(
+    `[Reindex] ${mapping.mongoCollection}: finalizado. ${count} docs encolados.`,
+  );
   return { count };
 }

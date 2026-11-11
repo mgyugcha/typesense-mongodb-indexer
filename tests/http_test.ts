@@ -20,7 +20,7 @@ Deno.test({
   async fn() {
     await connect();
     await cleanQueue();
-    const worker = getWorker();
+    const worker = await getWorker();
     ensureServer();
 
     const res = await fetch(`${BASE}/health`);
@@ -43,7 +43,7 @@ Deno.test({
   async fn() {
     await connect();
     await cleanQueue();
-    const worker = getWorker();
+    const worker = await getWorker();
     ensureServer();
 
     const res = await fetch(`${BASE}/ready`);
@@ -64,7 +64,7 @@ Deno.test({
   async fn() {
     await connect();
     await cleanQueue();
-    const worker = getWorker();
+    const worker = await getWorker();
     ensureServer();
 
     const res = await fetch(`${BASE}/queue`);
@@ -85,7 +85,7 @@ Deno.test({
   async fn() {
     await connect();
     await cleanQueue();
-    const worker = getWorker();
+    const worker = await getWorker();
     const dbConfig = CONFIG.mongodb[0];
     const mapping = dbConfig.collections[0];
     const client = getFirstClient();
@@ -125,7 +125,7 @@ Deno.test({
   async fn() {
     await connect();
     await cleanQueue();
-    const worker = getWorker();
+    const worker = await getWorker();
     const dbConfig = CONFIG.mongodb[0];
     const mapping = dbConfig.collections[0];
     const client = getFirstClient();
@@ -171,7 +171,7 @@ Deno.test({
   async fn() {
     await connect();
     await cleanQueue();
-    const worker = getWorker();
+    const worker = await getWorker();
     ensureServer();
 
     const res = await fetch(`${BASE}/nonexistent`);

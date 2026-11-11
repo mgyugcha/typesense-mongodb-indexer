@@ -1,4 +1,4 @@
-import { ChangeStream, MongoClient, ResumeToken } from "mongodb";
+import { BSON, ChangeStream, MongoClient, ResumeToken } from "mongodb";
 import {
   getCheckpoint,
   getCheckpointKey,
@@ -6,7 +6,6 @@ import {
   saveCheckpoint,
 } from "../lib/db.ts";
 import { syncQueue } from "../lib/queue.ts";
-import { applyTransform } from "../utils/transform.ts";
 import { debugLog } from "../utils/logger.ts";
 import { CollectionMapping } from "../types.ts";
 
@@ -26,8 +25,8 @@ export async function startCDC(
 
   const changeStream = collection.watch([], options);
 
-  const batchBuffer: Record<string, unknown>[] = [];
-  let batchTimer: number | null = null;
+  const batchBuffer: string[] = [];
+  let batchTimer: ReturnType<typeof setTimeout> | null = null;
   let lastResumeToken: ResumeToken | null = null;
 
   async function flushBuffer() {
@@ -41,7 +40,7 @@ export async function startCDC(
       );
       await syncQueue.add("bulk-sync", {
         action: "upsert-bulk",
-        data: batch,
+        sourceIds: batch,
         mappingName: mapping.schema.name,
       });
       if (lastResumeToken) {
@@ -72,13 +71,15 @@ export async function startCDC(
       if (
         change.operationType === "insert" || change.operationType === "replace"
       ) {
-        const transformed = applyTransform(mapping, change.fullDocument!);
-        batchBuffer.push(transformed);
+        batchBuffer.push(
+          BSON.EJSON.stringify(change.documentKey._id, { relaxed: false }),
+        );
         scheduleFlush();
       } else if (change.operationType === "update") {
         if (change.fullDocument) {
-          const transformed = applyTransform(mapping, change.fullDocument);
-          batchBuffer.push(transformed);
+          batchBuffer.push(
+            BSON.EJSON.stringify(change.documentKey._id, { relaxed: false }),
+          );
           scheduleFlush();
         }
       } else if (change.operationType === "delete") {
