@@ -105,7 +105,8 @@ The workflow will build the image and push it to
 
 - A Kubernetes cluster (minikube, kind, or a cloud provider).
 - `kubectl` configured to communicate with your cluster.
-- The image published to GHCR (see [Manual Build](#manual-build-with-github-actions) above).
+- The image published to GHCR (see
+  [Manual Build](#manual-build-with-github-actions) above).
 
 ### 1. Create the ConfigMap
 
@@ -239,6 +240,14 @@ To listen for real-time changes continuously:
 deno task start
 ```
 
+### Unit tests
+
+The normalization helpers don't need any service:
+
+```bash
+deno task test:unit
+```
+
 ### Rebuild Collections
 
 To wipe the existing Typesense collections and import all documents from
@@ -270,10 +279,18 @@ DEBUG=true deno task start
 1. **Mapping**: In `config.ts`, you map a MongoDB collection to a Typesense
    collection. You can specify a `transform` function to clean up or structure
    your document.
-2. **Workers**: The indexer pushes `upsert`, `delete`, or `upsert-bulk` jobs
+2. **Transform context**: `transform(doc, ctx)` can be async and receives
+   `ctx.db` and `ctx.cache`. `ctx.db` lets you read other collections;
+   `ctx.cache` lives for one job, so you can memoize lookups and avoid repeating
+   a query for every document in a batch.
+3. **Dependencies**: a mapping can declare `dependencies`. When a document in
+   that collection changes, the indexer reindexes the mapping's documents that
+   reference it (`localField`, batched by 500). It has its own change stream and
+   checkpoint, so a renamed referenced document is reflected in the index.
+4. **Workers**: The indexer pushes `upsert`, `delete`, or `upsert-bulk` jobs
    into a Redis queue. A worker consumes this queue with configurable
    concurrency, communicating with the Typesense API.
-3. **Checkpoints**: Every processed change stream event generates a Resume
+5. **Checkpoints**: Every processed change stream event generates a Resume
    Token. This is stored in Redis. On restart, the indexer requests MongoDB to
    stream changes strictly _after_ that token.
 

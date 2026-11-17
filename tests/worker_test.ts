@@ -35,9 +35,9 @@ async function setup() {
     connection: redisOptions!,
   });
   await events.waitUntilReady();
-  const collection = getFirstClient().db(mapping.mongoDb).collection(
-    mapping.mongoCollection,
-  );
+  const collection = getFirstClient()
+    .db(mapping.mongoDb)
+    .collection(mapping.mongoCollection);
   return { mapping, collection, events };
 }
 
@@ -61,10 +61,10 @@ Deno.test({
         mappingName: mapping.schema.name,
       });
       await job.waitUntilFinished(events, 5000);
-      const indexed = await typesense.collections<
-        { title: string; content: string }
-      >(mapping.schema.name)
-        .documents(id).retrieve();
+      const indexed = await typesense
+        .collections<{ title: string; content: string }>(mapping.schema.name)
+        .documents(id)
+        .retrieve();
       assertEquals(indexed.title, "issued");
       assertEquals(indexed.content, "Actual");
     } finally {
@@ -96,10 +96,10 @@ Deno.test({
         });
         await job.waitUntilFinished(events, 5000);
       }
-      const indexed = await typesense.collections<
-        { title: string; content: string }
-      >(mapping.schema.name)
-        .documents(id).retrieve();
+      const indexed = await typesense
+        .collections<{ title: string; content: string }>(mapping.schema.name)
+        .documents(id)
+        .retrieve();
       assertEquals(indexed.title, "issued");
       assertEquals(indexed.content, "Actual");
     } finally {
@@ -128,24 +128,31 @@ Deno.test({
       documents.upsert = async (document, options) => {
         attempts++;
         if (attempts === 1) {
-          await collection.updateOne({ _id: insertedId }, {
-            $set: { title: "issued" },
-          });
+          await collection.updateOne(
+            { _id: insertedId },
+            {
+              $set: { title: "issued" },
+            },
+          );
           throw new Error("Fallo temporal de conexión simulado");
         }
         return await originalUpsert.call(documents, document, options);
       };
-      const job = await syncQueue.add("retry-upsert", {
-        action: "upsert",
-        sourceIds: [BSON.EJSON.stringify(insertedId, { relaxed: false })],
-        data: { id, doc_id: id, title: "sent", content: "Antiguo" },
-        mappingName: mapping.schema.name,
-      }, { attempts: 2, backoff: { type: "fixed", delay: 100 } });
+      const job = await syncQueue.add(
+        "retry-upsert",
+        {
+          action: "upsert",
+          sourceIds: [BSON.EJSON.stringify(insertedId, { relaxed: false })],
+          data: { id, doc_id: id, title: "sent", content: "Antiguo" },
+          mappingName: mapping.schema.name,
+        },
+        { attempts: 2, backoff: { type: "fixed", delay: 100 } },
+      );
       await job.waitUntilFinished(events, 10000);
-      const indexed = await typesense.collections<
-        { title: string; content: string }
-      >(mapping.schema.name)
-        .documents(id).retrieve();
+      const indexed = await typesense
+        .collections<{ title: string; content: string }>(mapping.schema.name)
+        .documents(id)
+        .retrieve();
       assertEquals(attempts, 2);
       assertEquals(indexed.title, "issued");
     } finally {
@@ -209,10 +216,10 @@ Deno.test({
         { _id: objectId, title: "ObjectId", content: "Actual" },
       ]);
       for (
-        const [sourceId, title] of [[stringId, "String"], [
-          objectId,
-          "ObjectId",
-        ]]
+        const [sourceId, title] of [
+          [stringId, "String"],
+          [objectId, "ObjectId"],
+        ]
       ) {
         const job = await syncQueue.add("typed-source-id", {
           action: "upsert",
@@ -220,9 +227,10 @@ Deno.test({
           mappingName: mapping.schema.name,
         });
         await job.waitUntilFinished(events, 5000);
-        const indexed = await typesense.collections<{ title: string }>(
-          mapping.schema.name,
-        ).documents(stringId).retrieve();
+        const indexed = await typesense
+          .collections<{ title: string }>(mapping.schema.name)
+          .documents(stringId)
+          .retrieve();
         assertEquals(indexed.title, title);
       }
     } finally {
@@ -240,11 +248,15 @@ Deno.test({
     const { mapping, events } = await setup();
     const worker = await getWorker();
     try {
-      const job = await syncQueue.add("missing-source-id", {
-        action: "upsert",
-        data: { id: "001-001-000123" },
-        mappingName: mapping.schema.name,
-      }, { attempts: 1 });
+      const job = await syncQueue.add(
+        "missing-source-id",
+        {
+          action: "upsert",
+          data: { id: "001-001-000123" },
+          mappingName: mapping.schema.name,
+        },
+        { attempts: 1 },
+      );
       await assertRejects(
         () => job.waitUntilFinished(events, 5000),
         /sourceIds/,
@@ -268,7 +280,10 @@ for (const producer of ["upsert", "upsert-bulk", "rebuild", "reindex", "cdc"]) {
         ...mapping,
         schema: { ...mapping.schema, name: `custom-${crypto.randomUUID()}` },
         transform: (document: unknown) => ({
-          ...originalTransform(document),
+          ...originalTransform(document as never, {
+            db: undefined as never,
+            cache: new Map(),
+          }),
           id: (document as { numeroFactura: string }).numeroFactura,
         }),
       };
@@ -315,9 +330,11 @@ for (const producer of ["upsert", "upsert-bulk", "rebuild", "reindex", "cdc"]) {
           jobs.map((job) => job.waitUntilFinished(events, 5000)),
         );
         assertEquals(jobs[0].data.sourceIds, [sourceId]);
-        const indexed = await typesense.collections<
-          { id: string; doc_id: string; title: string }
-        >(customMapping.schema.name).documents(document.numeroFactura)
+        const indexed = await typesense
+          .collections<{ id: string; doc_id: string; title: string }>(
+            customMapping.schema.name,
+          )
+          .documents(document.numeroFactura)
           .retrieve();
         assertEquals(indexed.id, document.numeroFactura);
         assertEquals(indexed.doc_id, insertedId.toString());
@@ -346,13 +363,17 @@ Deno.test({
     const workers = Array.from(
       { length: 2 },
       () =>
-        new Worker("typesense-sync", async () => {
-          active++;
-          maxActive = Math.max(maxActive, active);
-          await new Promise((resolve) => setTimeout(resolve, 100));
-          active--;
-          processed++;
-        }, { connection: redisOptions!, concurrency: 5 }),
+        new Worker(
+          "typesense-sync",
+          async () => {
+            active++;
+            maxActive = Math.max(maxActive, active);
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            active--;
+            processed++;
+          },
+          { connection: redisOptions!, concurrency: 5 },
+        ),
     );
     try {
       await Promise.all(workers.map((worker) => worker.waitUntilReady()));

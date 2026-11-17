@@ -49,6 +49,13 @@ export function getCheckpointKey(mapping: CollectionMapping) {
   return `checkpoint:${mapping.mongoDb}:${mapping.mongoCollection}`;
 }
 
+export function getDependencyCheckpointKey(
+  mapping: CollectionMapping,
+  dependencyCollection: string,
+) {
+  return `${getCheckpointKey(mapping)}:dep:${dependencyCollection}`;
+}
+
 export async function saveCheckpoint(
   mapping: CollectionMapping,
   token: ResumeToken,
@@ -63,6 +70,32 @@ export async function getCheckpoint(
 ): Promise<ResumeToken | null> {
   if (redisConn) {
     const data = await redisConn.get(getCheckpointKey(mapping));
+    return data ? JSON.parse(data) : null;
+  }
+  return null;
+}
+
+export async function saveDependencyCheckpoint(
+  mapping: CollectionMapping,
+  dependencyCollection: string,
+  token: ResumeToken,
+) {
+  if (redisConn) {
+    await redisConn.set(
+      getDependencyCheckpointKey(mapping, dependencyCollection),
+      JSON.stringify(token),
+    );
+  }
+}
+
+export async function getDependencyCheckpoint(
+  mapping: CollectionMapping,
+  dependencyCollection: string,
+): Promise<ResumeToken | null> {
+  if (redisConn) {
+    const data = await redisConn.get(
+      getDependencyCheckpointKey(mapping, dependencyCollection),
+    );
     return data ? JSON.parse(data) : null;
   }
   return null;

@@ -1,5 +1,25 @@
 import { CollectionCreateSchema } from "typesense/lib/Typesense/Collections.ts";
-import { Document } from "mongodb";
+import { Db, Document } from "mongodb";
+
+/**
+ * Contexto que recibe `transform`. `db` permite resolver datos de otras
+ * colecciones y `cache` evita repetir consultas dentro del mismo lote.
+ */
+export interface TransformContext {
+  db: Db;
+  cache: Map<string, unknown>;
+}
+
+/**
+ * Dependencia entre colecciones: un cambio en `mongoCollection` reencola los
+ * documentos del mapping que referencian ese `_id` en `localField`.
+ */
+export interface CollectionDependency {
+  /** Colección de MongoDB que se observa. */
+  mongoCollection: string;
+  /** Campo del documento del mapping que guarda el `_id` observado. */
+  localField: string;
+}
 
 export interface CollectionMapping {
   /** The MongoDB database name */
@@ -11,7 +31,12 @@ export interface CollectionMapping {
   /** Direct fields to project and sync (optional) */
   fields?: string[];
   /** Custom transformation function (optional, overrides fields) */
-  transform?: (doc: unknown) => Record<string, unknown>;
+  transform?: (
+    doc: Document,
+    ctx: TransformContext,
+  ) => Record<string, unknown> | Promise<Record<string, unknown>>;
+  /** Colecciones cuyos cambios reindexan documentos de este mapping. */
+  dependencies?: CollectionDependency[];
 }
 
 export interface IndexerConfig {
