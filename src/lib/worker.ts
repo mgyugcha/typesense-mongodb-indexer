@@ -16,8 +16,8 @@ export async function createWorker(): Promise<Worker> {
       const dbConfig = CONFIG.mongodb.find((db) =>
         db.collections.some((c) => c.schema.name === mappingName)
       );
-      const mapping = dbConfig?.collections.find((c) =>
-        c.schema.name === mappingName
+      const mapping = dbConfig?.collections.find(
+        (c) => c.schema.name === mappingName,
       );
 
       if (!mapping || !dbConfig) {
@@ -31,7 +31,8 @@ export async function createWorker(): Promise<Worker> {
             throw new Error(`MongoDB no conectado para: ${mappingName}`);
           }
           if (
-            !Array.isArray(sourceIds) || sourceIds.length === 0 ||
+            !Array.isArray(sourceIds) ||
+            sourceIds.length === 0 ||
             sourceIds.some((id) => typeof id !== "string" || !id) ||
             (action === "upsert" && sourceIds.length !== 1)
           ) {
@@ -40,14 +41,21 @@ export async function createWorker(): Promise<Worker> {
           const mongoIds = [...new Set<string>(sourceIds)].map((id) =>
             BSON.EJSON.parse(id, { relaxed: false })
           );
-          const documents = await client.db(mapping.mongoDb)
+          const db = client.db(mapping.mongoDb);
+          const documents = await client
+            .db(mapping.mongoDb)
             .collection<Document>(mapping.mongoCollection)
-            .find({ _id: { $in: mongoIds } }, {
-              readPreference: "primary",
-              readConcern: { level: "majority" },
-            }).toArray();
-          const currentData = documents.map((document) =>
-            applyTransform(mapping, document)
+            .find(
+              { _id: { $in: mongoIds } },
+              {
+                readPreference: "primary",
+                readConcern: { level: "majority" },
+              },
+            )
+            .toArray();
+          const ctx = { db, cache: new Map<string, unknown>() };
+          const currentData = await Promise.all(
+            documents.map((document) => applyTransform(mapping, document, ctx)),
           );
           if (currentData.length === 0) return;
 
@@ -61,20 +69,14 @@ export async function createWorker(): Promise<Worker> {
             await target.upsert(currentData[0]);
           }
         } else if (action === "delete") {
-          debugLog(
-            `Worker ejecutando delete en ${mapping.schema.name}`,
-            data,
-          );
+          debugLog(`Worker ejecutando delete en ${mapping.schema.name}`, data);
           await typesense
             .collections(mapping.schema.name)
             .documents(data.id)
             .delete();
         }
       } catch (error: any) {
-        console.error(
-          `[Worker] Error en ${mappingName}:`,
-          error.message,
-        );
+        console.error(`[Worker] Error en ${mappingName}:`, error.message);
         if (error.importResults) {
           const failedDocs = error.importResults.filter((r: any) => !r.success);
           console.error(

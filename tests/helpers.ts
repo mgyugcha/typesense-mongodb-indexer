@@ -44,7 +44,10 @@ export async function findInTypesense(
   for (let i = 0; i < retries; i++) {
     try {
       // Try direct retrieval by ID first (exact match)
-      const doc = await typesense.collections(collection).documents(value).retrieve();
+      const doc = await typesense
+        .collections(collection)
+        .documents(value)
+        .retrieve();
       return doc as unknown as Record<string, unknown>;
     } catch {
       // not found by ID, try search
@@ -76,10 +79,11 @@ export async function ensureTypesenseCollection(
   try {
     await typesense.collections(name).retrieve();
   } catch {
+    const sortable = fields.find((field) => field.sort)?.name;
     await typesense.collections().create({
       name,
       fields: fields as any,
-      default_sorting_field: fields.find((f) => f.sort)?.name || fields[0]?.name,
+      ...(sortable ? { default_sorting_field: sortable } : {}),
     });
   }
 }
@@ -99,6 +103,9 @@ export async function cleanCheckpoint() {
       for (const mapping of dbConfig.collections) {
         const key = `checkpoint:${mapping.mongoDb}:${mapping.mongoCollection}`;
         await redisConn.del(key);
+        for (const dependency of mapping.dependencies || []) {
+          await redisConn.del(`${key}:dep:${dependency.mongoCollection}`);
+        }
       }
     }
   }

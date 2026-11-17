@@ -1,6 +1,10 @@
 import { CollectionCreateSchema } from "typesense/lib/Typesense/Collections.ts";
-import { CollectionMapping, IndexerConfig } from "./src/types.ts";
-import { ObjectId } from "mongodb";
+import {
+  CollectionMapping,
+  IndexerConfig,
+  TransformContext,
+} from "./src/types.ts";
+import { Document, ObjectId } from "mongodb";
 
 export const CONFIG: IndexerConfig = {
   valkey: {
@@ -47,6 +51,30 @@ export const CONFIG: IndexerConfig = {
             title: doc.title || "",
             content: doc.content || "",
           }),
+        },
+        {
+          mongoDb: "testdb",
+          mongoCollection: "dependentdocs",
+          schema: {
+            name: "dependentdocs",
+            fields: [{ name: "tag", type: "string" }],
+          } as CollectionCreateSchema,
+          dependencies: [{ mongoCollection: "testtags", localField: "tagId" }],
+          transform: async (doc: Document, ctx: TransformContext) => {
+            const tagId = doc.tagId as ObjectId | undefined;
+            const cacheKey = tagId?.toString() ?? "";
+            let tag = cacheKey
+              ? (ctx.cache.get(cacheKey) as string | undefined)
+              : "";
+            if (tag === undefined) {
+              const tagDoc = tagId
+                ? await ctx.db.collection("testtags").findOne({ _id: tagId })
+                : null;
+              tag = String(tagDoc?.name ?? "");
+              if (cacheKey) ctx.cache.set(cacheKey, tag);
+            }
+            return { id: doc._id.toString(), tag };
+          },
         },
       ] as CollectionMapping[],
     },

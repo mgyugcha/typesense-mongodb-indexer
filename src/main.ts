@@ -13,6 +13,7 @@ import { createWorker } from "./lib/worker.ts";
 import { startHttpServer } from "./lib/http.ts";
 import { runRebuild } from "./core/rebuild.ts";
 import { startCDC } from "./core/cdc.ts";
+import { startDependencyCDC } from "./core/dependencies.ts";
 
 const flags = parseArgs(Deno.args, {
   boolean: ["rebuild"],
@@ -33,8 +34,8 @@ async function main() {
       if (!client) continue;
 
       const targetCollections = flags.collection
-        ? dbConfig.collections.filter((c) =>
-          c.mongoCollection === flags.collection
+        ? dbConfig.collections.filter(
+          (c) => c.mongoCollection === flags.collection,
         )
         : dbConfig.collections;
 
@@ -64,6 +65,9 @@ async function main() {
         }
 
         startCDC(mapping, client);
+        for (const dependency of mapping.dependencies || []) {
+          startDependencyCDC(mapping, dependency, client);
+        }
       }
     }
 
