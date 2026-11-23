@@ -21,9 +21,8 @@ interface CambioDependencia {
 }
 
 /**
- * Observa una colección de la que dependen los documentos de un mapping. Para
- * `products`, un cambio en `categorias` reencola los productos que la tienen,
- * así el nombre nuevo llega al índice.
+ * Observa una colección de la que dependen los documentos de un mapping: un
+ * cambio en ella reencola los documentos que guardan su `_id` en `localField`.
  */
 export async function startDependencyCDC(
   mapping: CollectionMapping,

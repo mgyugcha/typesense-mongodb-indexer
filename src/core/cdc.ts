@@ -1,4 +1,10 @@
-import { BSON, ChangeStream, MongoClient, ResumeToken } from "mongodb";
+import {
+  BSON,
+  ChangeStream,
+  MongoClient,
+  ResumeToken,
+  UpdateDescription,
+} from "mongodb";
 import {
   getCheckpoint,
   getCheckpointKey,
@@ -76,6 +82,18 @@ export async function startCDC(
         );
         scheduleFlush();
       } else if (change.operationType === "update") {
+        const updateDescription = change.updateDescription as
+          | UpdateDescription
+          | undefined;
+        if (
+          updateDescription && mapping.skipUpdate &&
+          mapping.skipUpdate(updateDescription)
+        ) {
+          if (batchBuffer.length === 0) {
+            saveCheckpoint(mapping, change._id);
+          }
+          return;
+        }
         if (change.fullDocument) {
           batchBuffer.push(
             BSON.EJSON.stringify(change.documentKey._id, { relaxed: false }),

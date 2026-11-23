@@ -1,4 +1,4 @@
-import { Document } from "mongodb";
+import { Document, UpdateDescription } from "mongodb";
 import { CollectionMapping, TransformContext } from "../types.ts";
 
 export async function applyTransform(
@@ -39,31 +39,35 @@ export function normalizeText(value?: string | null): string {
     .trim();
 }
 
-/** Sin separadores: `A-001` y `A001` producen `a001`. */
-export function normalizeCode(value?: string | null): string {
-  if (!value) return "";
-  return value
-    .normalize("NFD")
-    .replace(ACENTOS, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
-}
-
-function decodeSegmento(segmento: string): string {
-  try {
-    return decodeURIComponent(segmento);
-  } catch {
-    return segmento;
-  }
+/**
+ * Codifica el valor como hex UTF-8 de `trim().toLowerCase()`. Typesense
+ * tokeniza y quita símbolos también en `:=`, así que el valor debe ser opaco
+ * (`sku-001` y `sku001` no pueden empatar).
+ */
+export function encodeExactCode(value?: string | null): string {
+  const normalizado = value?.trim().toLowerCase() ?? "";
+  if (!normalizado) return "";
+  return [...new TextEncoder().encode(normalizado)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 /**
- * Nombre crudo de una categoría a texto buscable. Se parte por `/` antes de
- * decodificar: un `/` literal se guarda como `%2F`.
- * `Bandas%20y%20transmisi%C3%B3n/DAYKO%2FCUMMINS` →
- * `bandas y transmision dayko cummins`.
+ * Hook de `cdc.ts`: `true` cuando el update solo tocó rutas fuera de
+ * `camposIndexados`, probadas contra las rutas que reporta MongoDB.
  */
-export function categorySearchText(nombre?: string | null): string {
-  if (!nombre) return "";
-  return normalizeText(nombre.split("/").map(decodeSegmento).join(" "));
+export function skipUnindexedUpdates(
+  camposIndexados: RegExp[],
+): (update: UpdateDescription) => boolean {
+  return (update) => {
+    const rutas = [
+      ...Object.keys(update.updatedFields ?? {}),
+      ...(update.removedFields ?? []),
+      ...(update.truncatedArrays ?? []).map((truncado) => truncado.field),
+    ];
+    return rutas.length > 0 &&
+      rutas.every((ruta) =>
+        !camposIndexados.some((patron) => patron.test(ruta))
+      );
+  };
 }

@@ -1,9 +1,11 @@
 import { CollectionCreateSchema } from "typesense/lib/Typesense/Collections.ts";
-import { Db, Document } from "mongodb";
+import { Db, Document, UpdateDescription } from "mongodb";
 
 /**
- * Contexto que recibe `transform`. `db` permite resolver datos de otras
- * colecciones y `cache` evita repetir consultas dentro del mismo lote.
+ * Contexto que reciben `prepare` y `transform`. `db` permite leer otras
+ * colecciones. `prepare` deja en `cache` los datos del lote que `transform`
+ * consulta después. El contexto dura un job: cada lote arranca con un `cache`
+ * vacío.
  */
 export interface TransformContext {
   db: Db;
@@ -30,11 +32,24 @@ export interface CollectionMapping {
   schema: CollectionCreateSchema;
   /** Direct fields to project and sync (optional) */
   fields?: string[];
-  /** Custom transformation function (optional, overrides fields) */
-  transform?: (
+  /**
+   * Custom transformation function (optional, overrides fields). Se declara
+   * como método para aceptar configs con un tipo de documento propio.
+   */
+  transform?(
     doc: Document,
     ctx: TransformContext,
-  ) => Record<string, unknown> | Promise<Record<string, unknown>>;
+  ): Record<string, unknown> | Promise<Record<string, unknown>>;
+  /**
+   * Precarga datos compartidos por el lote antes de transformar. Se ejecuta una
+   * sola vez por job, en lugar de una consulta por documento.
+   */
+  prepare?(docs: Document[], ctx: TransformContext): Promise<void> | void;
+  /**
+   * `true` cuando un update no toca campos indexados: solo se avanza el
+   * checkpoint, sin encolar trabajo.
+   */
+  skipUpdate?(updateDescription: UpdateDescription): boolean;
   /** Colecciones cuyos cambios reindexan documentos de este mapping. */
   dependencies?: CollectionDependency[];
 }
@@ -55,6 +70,8 @@ export interface IndexerConfig {
     connectionTimeoutSeconds?: number;
     numRetries?: number;
     retryIntervalSeconds?: number;
+    /** Nivel de logs del cliente de Typesense. Por defecto `"error"`. */
+    logLevel?: "trace" | "debug" | "info" | "warn" | "error" | "silent";
   };
   mongodb: Array<{
     uri: string;

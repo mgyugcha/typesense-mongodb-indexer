@@ -294,6 +294,27 @@ DEBUG=true deno task start
    Token. This is stored in Redis. On restart, the indexer requests MongoDB to
    stream changes strictly _after_ that token.
 
+### Hooks and helpers
+
+A mapping can define `prepare(docs, ctx)`, which runs once per batch before
+`transform`. Use it to load data shared by the batch into `ctx.cache`, so each
+document reads from memory instead of querying. `skipUpdate(updateDescription)`
+returns `true` when an update touches no indexed field; the indexer then only
+advances the checkpoint and queues no work. `skipUnindexedUpdates(patterns)`
+builds that hook from a list of regular expressions. The helpers `normalizeText`
+(lowercase, no accents, alphanumeric words) and `encodeExactCode` (opaque hex
+for exact matches) are exported from `src/utils/transform.ts`.
+
+### When Typesense is unavailable
+
+If a job fails because Typesense cannot be reached (connection errors, or HTTP
+502, 503 or 504), the job goes back to the queue without using one of its
+attempts. The worker pauses and checks `/health` every 5 seconds, then resumes
+on its own when Typesense answers `ok: true`. Other errors, such as a rejected
+document, keep the normal retries. The client's internal retries default to 1
+(`typesense.numRetries` in `config.ts`). If the Valkey queue is lost during an
+outage, recover with `deno task rebuild` or `POST /reindex`.
+
 ## License
 
 MIT

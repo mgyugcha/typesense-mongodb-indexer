@@ -1,17 +1,29 @@
-import { Job, Worker } from "bullmq";
+import { DelayedError, Job, Worker } from "bullmq";
 import { BSON, type Document } from "mongodb";
 import { mongoClients, redisOptions, typesense } from "./db.ts";
 import { CONFIG } from "../../config.ts";
 import { debugLog } from "../utils/logger.ts";
 import { applyTransform } from "../utils/transform.ts";
 import { syncQueue } from "./queue.ts";
+import { sondearSalud } from "./sonda.ts";
+import {
+  crearControlDisponibilidad,
+  ejecutarConDisponibilidad,
+  ServicioNoDisponibleError,
+} from "./disponibilidad.ts";
 
 export async function createWorker(): Promise<Worker> {
   await syncQueue.setGlobalConcurrency(1);
 
-  return new Worker(
+  const control = crearControlDisponibilidad({
+    sondear: () => sondearSalud(CONFIG.typesense.nodes),
+    pausar: () => worker.pause(true),
+    reanudar: () => worker.resume(),
+  });
+
+  const worker = new Worker(
     "typesense-sync",
-    async (job: Job) => {
+    async (job: Job, token?: string) => {
       const { action, data, mappingName, sourceIds } = job.data;
       const dbConfig = CONFIG.mongodb.find((db) =>
         db.collections.some((c) => c.schema.name === mappingName)
@@ -54,6 +66,7 @@ export async function createWorker(): Promise<Worker> {
             )
             .toArray();
           const ctx = { db, cache: new Map<string, unknown>() };
+          if (mapping.prepare) await mapping.prepare(documents, ctx);
           const currentData = await Promise.all(
             documents.map((document) => applyTransform(mapping, document, ctx)),
           );
@@ -64,21 +77,41 @@ export async function createWorker(): Promise<Worker> {
           );
           const target = typesense.collections(mapping.schema.name).documents();
           if (action === "upsert-bulk") {
-            await target.import(currentData, { action: "upsert" });
+            await ejecutarConDisponibilidad(
+              job,
+              token,
+              control,
+              () => target.import(currentData, { action: "upsert" }),
+            );
           } else {
-            await target.upsert(currentData[0]);
+            await ejecutarConDisponibilidad(
+              job,
+              token,
+              control,
+              () => target.upsert(currentData[0]),
+            );
           }
         } else if (action === "delete") {
           debugLog(`Worker ejecutando delete en ${mapping.schema.name}`, data);
-          await typesense
-            .collections(mapping.schema.name)
-            .documents(data.id)
-            .delete();
+          await ejecutarConDisponibilidad(job, token, control, () =>
+            typesense
+              .collections(mapping.schema.name)
+              .documents(data.id)
+              .delete());
         }
-      } catch (error: any) {
-        console.error(`[Worker] Error en ${mappingName}:`, error.message);
-        if (error.importResults) {
-          const failedDocs = error.importResults.filter((r: any) => !r.success);
+      } catch (error) {
+        if (error instanceof ServicioNoDisponibleError) {
+          throw new DelayedError(error.message);
+        }
+        const mensaje = error instanceof Error ? error.message : String(error);
+        console.error(`[Worker] Error en ${mappingName}:`, mensaje);
+        const importResults = (error as {
+          importResults?: Array<{ success: boolean }>;
+        }).importResults;
+        if (importResults) {
+          const failedDocs = importResults.filter((resultado) =>
+            !resultado.success
+          );
           console.error(
             "Primeros 5 documentos fallidos:",
             JSON.stringify(failedDocs.slice(0, 5), null, 2),
@@ -92,4 +125,7 @@ export async function createWorker(): Promise<Worker> {
       concurrency: 1,
     },
   );
+
+  worker.on("closed", () => control.detener());
+  return worker;
 }
