@@ -17,7 +17,7 @@ Raw `deno run` needs all five `--allow-*` flags (`--allow-net --allow-read --all
 ## Testing
 
 **Integration-only** — requires Docker. `scripts/run-tests.sh` does everything:
-1. Starts `docker-compose.test.yml` (MongoDB RS, Typesense 27.0, Redis 7)
+1. Starts `docker-compose.test.yml` (MongoDB RS, Typesense 30.2, Redis 7)
 2. Copies `config.test.ts` → `config.ts`
 3. Runs `deno test tests/` with all permissions
 4. Restores original `config.ts` and tears down containers on exit
