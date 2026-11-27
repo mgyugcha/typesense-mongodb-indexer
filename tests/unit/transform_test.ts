@@ -5,6 +5,7 @@ import {
   encodeExactCode,
   normalizeText,
   skipUnindexedUpdates,
+  tokensSeparadosPorLetraDigito,
 } from "../../src/utils/transform.ts";
 
 const update = (datos: Partial<UpdateDescription>): UpdateDescription => ({
@@ -23,6 +24,30 @@ Deno.test("normalizeText: tildes, mayúsculas y separadores", () => {
   assertEquals(normalizeText("A-001"), "a 001");
   assertEquals(normalizeText("50%"), "50");
   assertEquals(normalizeText(undefined), "");
+});
+
+Deno.test("tokensSeparadosPorLetraDigito: parte solo tokens mixtos de la descripción", () => {
+  assertEquals(
+    tokensSeparadosPorLetraDigito("P. AUTOMOTRIZ CHEV SWIFT M12X1.25 X 40"),
+    ["m", "12", "x", "1"],
+  );
+  assertEquals(tokensSeparadosPorLetraDigito("PERNO 40 MM"), []);
+  assertEquals(tokensSeparadosPorLetraDigito("CHASIS #21 / 40 PIES"), []);
+  assertEquals(
+    tokensSeparadosPorLetraDigito("REEMPLAZA A (PAE20069) Y PAE40015"),
+    [],
+  );
+  assertEquals(tokensSeparadosPorLetraDigito(undefined), []);
+});
+
+Deno.test("tokensSeparadosPorLetraDigito: casos borde de tildes, dígitos y repetición", () => {
+  assertEquals(tokensSeparadosPorLetraDigito("ÁB12"), ["ab", "12"]);
+  assertEquals(tokensSeparadosPorLetraDigito("M123"), ["m", "123"]);
+  assertEquals(tokensSeparadosPorLetraDigito("M1234"), []);
+  assertEquals(
+    tokensSeparadosPorLetraDigito("M12X1 M12X1"),
+    ["m", "12", "x", "1", "m", "12", "x", "1"],
+  );
 });
 
 Deno.test("encodeExactCode: hex UTF-8 opaco para Typesense", () => {

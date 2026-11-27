@@ -1,16 +1,20 @@
 import { assert, assertEquals } from "@std/assert";
 import { typesense } from "./helpers.ts";
-import { encodeExactCode, normalizeText } from "../src/utils/transform.ts";
+import {
+  encodeExactCode,
+  normalizeText,
+  tokensSeparadosPorLetraDigito,
+} from "../src/utils/transform.ts";
 
 const COLECCION = "test_productos_infix";
 const EMPRESA = "negocio-test";
 const FILTRO = `business:=${EMPRESA} && type:=producto && tipoProducto:=bien`;
 
 const PARAMS_API = {
-  query_by: "codes,description,categoriasTexto,searchText",
-  query_by_weights: "4,3,2,1",
-  num_typos: "0,2,2,2",
-  prefix: "true,true,true,true",
+  query_by: "codes,searchText",
+  query_by_weights: "4,1",
+  num_typos: "0,2",
+  prefix: "true,true",
   drop_tokens_threshold: 0,
   min_len_1typo: 4,
   min_len_2typo: 7,
@@ -21,8 +25,8 @@ const PARAMS_API = {
 
 type Infix = "always" | "fallback" | "off";
 
-const INFIX_API: Infix[] = ["always", "always", "off", "off"];
-const SIN_INFIX: Infix[] = ["off", "off", "off", "off"];
+const INFIX_API: Infix[] = ["always", "off"];
+const SIN_INFIX: Infix[] = ["off", "off"];
 
 const sortApi = (q: string) =>
   `_eval(codesExact:=[${encodeExactCode(q)}]):desc,_text_match:desc,code:asc`;
@@ -35,13 +39,12 @@ type Doc = {
   code: string;
   codes: string[];
   codesExact: string[];
-  description: string;
   searchText: string;
   idTs: number;
 };
 
 // Mismo cálculo que documentoProducto: codes en minúsculas, codesExact en hex
-// del valor original y searchText normalizado.
+// del valor original y searchText con los tokens partidos de la descripción.
 function doc(
   id: string,
   codigos: string[],
@@ -49,6 +52,7 @@ function doc(
   idTs: number,
   extra: Partial<Doc> = {},
 ): Doc {
+  const tokens = tokensSeparadosPorLetraDigito(description).join(" ");
   return {
     id,
     business: EMPRESA,
@@ -57,8 +61,10 @@ function doc(
     code: codigos[0],
     codes: codigos.map((c) => c.toLowerCase()),
     codesExact: codigos.map((c) => encodeExactCode(c)),
-    description,
-    searchText: normalizeText([...codigos, description].join(" ")),
+    searchText: [
+      normalizeText([...codigos, description].join(" ")),
+      tokens,
+    ].filter(Boolean).join(" "),
     idTs,
     ...extra,
   };
@@ -72,20 +78,23 @@ const documentos: Doc[] = [
   doc("i", ["PAE20069"], "tornillo hexagonal", 4),
   // El fragmento está solo en el código auxiliar.
   doc("m", ["AB1", "ZZ20069"], "producto auxiliar", 5),
-  // Cruce de campos, dirección 1: A por prefijo en description (peso 3)
-  // frente a B solo por infix en codes (peso 4). Consulta: torn.
-  doc("x1", ["ZZ9"], "tornillo corto", 6),
-  doc("x2", ["XTORN9"], "producto b", 7),
-  // Cruce de campos, dirección 2: A por prefijo en codes (peso 4) frente a
-  // B solo por infix en description (peso 3). Consulta: torn.
-  doc("a1", ["TORN01"], "producto a", 8),
-  doc("b1", ["B9"], "destornillador", 9),
+  doc("tornillo", ["TOR01"], "tornillo corto", 6),
   // Otra empresa, mismos fragmentos: nunca debe aparecer con el filtro de la API.
-  doc("ajeno", ["PAE20069"], "tornillo hexagonal", 10, {
+  doc("ajeno", ["PAE20069"], "tornillo hexagonal", 7, {
     business: "otra-empresa",
   }),
   // Misma empresa, otro tipo: tampoco debe aparecer.
-  doc("srv", ["SRV20069"], "servicio torneado", 11, { type: "servicio" }),
+  doc("srv", ["SRV20069"], "servicio torneado", 8, { type: "servicio" }),
+  // Pernos: la descripción mezcla letras y dígitos (M12X1.25 X 40).
+  doc("perno1", ["PRN-001"], "P. AUTOMOTRIZ CHEV SWIFT M12X1.25 X 40", 9),
+  doc("perno2", ["PRN-002"], "PERNO AUTOMOTRIZ M12X1.25 X 40 ACERO", 10),
+  doc("perno3", ["PRN-003"], "PERNO AUTOMOTRIZ M12 X 30", 11),
+  // Código con 40 dentro: no debe aparecer para la búsqueda `40`.
+  doc("pae40", ["PAE40001"], "ARANDELA PLANA", 12),
+  doc("chasis", ["CHS-021"], "CHASIS #21 / 40 PIES", 13),
+  doc("tuerca", ["TRC-001"], "TUERCA HEXAGONAL M10", 14),
+  // Solo cita PAE20069 en la descripción: no debe competir con el código real.
+  doc("cita", ["CIT-001"], "REEMPLAZA A (PAE20069)", 15),
 ];
 
 async function prepararColeccion() {
@@ -97,14 +106,12 @@ async function prepararColeccion() {
   await typesense.collections().create({
     name: COLECCION,
     fields: [
-      { name: "business", type: "string", facet: true },
-      { name: "type", type: "string", facet: true },
-      { name: "tipoProducto", type: "string", facet: true, optional: true },
+      { name: "business", type: "string" },
+      { name: "type", type: "string" },
+      { name: "tipoProducto", type: "string", optional: true },
       { name: "code", type: "string", sort: true },
       { name: "codes", type: "string[]", infix: true },
       { name: "codesExact", type: "string[]" },
-      { name: "description", type: "string", infix: true },
-      { name: "categoriasTexto", type: "string[]", optional: true },
       { name: "searchText", type: "string" },
       { name: "idTs", type: "int64", sort: true },
     ],
@@ -184,6 +191,41 @@ Deno.test({
 
 Deno.test({
   name:
+    "Citas: 20069 no trae el producto que solo cita PAE20069 en la descripción",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: () =>
+    conColeccion(async () => {
+      const hits = await buscar("20069", INFIX_API, {
+        sort_by: sortApi("20069"),
+      });
+      assert(
+        !ids(hits).includes("cita"),
+        `'20069' trajo el producto que solo cita el código: ${resumen(hits)}`,
+      );
+      assert(
+        ids(hits).includes("i"),
+        `'20069' no encontró PAE20069: ${resumen(hits)}`,
+      );
+    }),
+});
+
+Deno.test({
+  name: "Infix: q=0069 encuentra PAE20069 por infix de codes",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: () =>
+    conColeccion(async () => {
+      const hits = await buscar("0069", INFIX_API);
+      assert(
+        ids(hits).includes("i") && ids(hits).includes("e"),
+        `'0069' no encontró PAE20069: ${resumen(hits)}`,
+      );
+    }),
+});
+
+Deno.test({
+  name:
     "Infix: fragmento solo en el código auxiliar (codes[1]) encuentra el producto",
   sanitizeResources: false,
   sanitizeOps: false,
@@ -205,29 +247,15 @@ Deno.test({
 
 Deno.test({
   name:
-    "Infix: q=exag con infix encuentra description 'tornillo hexagonal'; agona solo con infix",
+    "Infix: no aplica a la descripción; 'agona' no encuentra 'tornillo hexagonal'",
   sanitizeResources: false,
   sanitizeOps: false,
   fn: () =>
     conColeccion(async () => {
-      const con = await buscar("exag", INFIX_API);
+      const hits = await buscar("agona", INFIX_API);
       assert(
-        ids(con).includes("i"),
-        `Con infix no apareció 'tornillo hexagonal': ${resumen(con)}`,
-      );
-
-      // 'exag' sin infix también llega por typo-prefix ('hexag'), así que el
-      // control que aísla infix usa 'agona', que solo existe dentro de 'hexagonal'.
-      const conAgona = await buscar("agona", INFIX_API);
-      assert(
-        ids(conAgona).includes("i"),
-        `Con infix 'agona' no encontró 'hexagonal': ${resumen(conAgona)}`,
-      );
-
-      const sinAgona = await buscar("agona", SIN_INFIX);
-      assert(
-        !ids(sinAgona).includes("i"),
-        `Sin infix apareció 'agona' en 'hexagonal': ${resumen(sinAgona)}`,
+        !ids(hits).includes("i"),
+        `Infix sobre searchText encontró 'hexagonal': ${resumen(hits)}`,
       );
     }),
 });
@@ -269,101 +297,129 @@ Deno.test({
 });
 
 Deno.test({
-  name:
-    "Infix cruzado (dirección 1): A por prefijo en description supera a B solo infix en codes",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  fn: () =>
-    conColeccion(async () => {
-      const hits = await buscar("torn", INFIX_API, {
-        sort_by: sortApi("torn"),
-      });
-      const orden = ids(hits);
-      assert(
-        orden.includes("x1") && orden.includes("x2"),
-        `Faltan x1 o x2: ${resumen(hits)}`,
-      );
-      assert(
-        orden.indexOf("x1") < orden.indexOf("x2"),
-        `Se esperaba x1 (prefijo en description) antes que x2 (solo infix en codes): ${
-          resumen(hits)
-        }`,
-      );
-    }),
-});
-
-Deno.test({
-  name:
-    "Infix cruzado (dirección 2): A por prefijo en codes supera a B solo infix en description",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  fn: () =>
-    conColeccion(async () => {
-      const hits = await buscar("torn", INFIX_API, {
-        sort_by: sortApi("torn"),
-      });
-      const orden = ids(hits);
-      assert(
-        orden.includes("a1") && orden.includes("b1"),
-        `Faltan a1 o b1: ${resumen(hits)}`,
-      );
-      assert(
-        orden.indexOf("a1") < orden.indexOf("b1"),
-        `Se esperaba a1 (prefijo en codes) antes que b1 (solo infix en description): ${
-          resumen(hits)
-        }`,
-      );
-    }),
-});
-
-Deno.test({
-  name:
-    "Infix: la tolerancia a errores en description se conserva (tornilo -> tornillo)",
+  name: "Tolerancia a errores de tipeo sobre searchText (tornilo -> tornillo)",
   sanitizeResources: false,
   sanitizeOps: false,
   fn: () =>
     conColeccion(async () => {
       const hits = await buscar("tornilo", INFIX_API);
       assert(
-        ids(hits).includes("i"),
-        `'tornilo' no encontró 'tornillo hexagonal': ${resumen(hits)}`,
+        ids(hits).includes("tornillo"),
+        `'tornilo' no encontró 'tornillo corto': ${resumen(hits)}`,
       );
-    }),
-});
-
-Deno.test({
-  name: "Infix: usar infix sobre un campo sin infix responde 400",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  fn: () =>
-    conColeccion(async () => {
-      let error: unknown;
-      try {
-        await buscar("exag", ["always", "always"], {
-          query_by: "codes,searchText",
-          query_by_weights: "4,1",
-          num_typos: "0,2",
-          prefix: "true,true",
-        });
-      } catch (e) {
-        error = e;
-      }
-      assert(
-        error,
-        "Typesense aceptó infix sobre searchText, que no declara infix",
-      );
-      assertEquals((error as { httpStatus?: number }).httpStatus, 400);
     }),
 });
 
 Deno.test({
   name:
-    "Filtros: el filtro de la API excluye otra empresa y otro tipo, sin tocar a los de la empresa",
+    "Partición de descripción: 'automotriz 12 40' encuentra los pernos M12X1.25 X 40",
   sanitizeResources: false,
   sanitizeOps: false,
   fn: () =>
     conColeccion(async () => {
-      for (const q of ["20069", "exag", "torn", "tornilo"]) {
+      const hits = await buscar("automotriz 12 40", SIN_INFIX);
+      const encontrados = ids(hits);
+      assert(
+        encontrados.includes("perno1") && encontrados.includes("perno2"),
+        `'automotriz 12 40' no encontró los pernos M12X1.25 X 40: ${
+          resumen(hits)
+        }`,
+      );
+      assert(
+        !encontrados.includes("perno3"),
+        `'automotriz 12 40' no debería traer 'M12 X 30': ${resumen(hits)}`,
+      );
+    }),
+});
+
+Deno.test({
+  name: "Partición de descripción: 'm12x1 25' sigue encontrando el perno",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: () =>
+    conColeccion(async () => {
+      const hits = await buscar("m12x1 25", SIN_INFIX);
+      assert(
+        ids(hits).includes("perno1") && ids(hits).includes("perno2"),
+        `'m12x1 25' no encontró los pernos: ${resumen(hits)}`,
+      );
+    }),
+});
+
+Deno.test({
+  name: "Partición: '40' no trae PAE40xxx por partición de códigos",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: () =>
+    conColeccion(async () => {
+      const hits = await buscar("40", SIN_INFIX);
+      assert(
+        !ids(hits).includes("pae40"),
+        `'40' trajo PAE40001 por partición de códigos: ${resumen(hits)}`,
+      );
+      assert(
+        ids(hits).includes("perno1") && ids(hits).includes("chasis"),
+        `'40' no encontró las descripciones con 40: ${resumen(hits)}`,
+      );
+    }),
+});
+
+Deno.test({
+  name:
+    "Descripción con símbolos: 'chasis 21 40 pies' coincide con 'CHASIS #21 / 40 PIES'",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: () =>
+    conColeccion(async () => {
+      const hits = await buscar("chasis 21 40 pies", SIN_INFIX);
+      assertEquals(
+        ids(hits),
+        ["chasis"],
+        `'chasis 21 40 pies' no encontró solo el chasis: ${resumen(hits)}`,
+      );
+    }),
+});
+
+Deno.test({
+  name:
+    "Partición de descripción: 'tuerca m10' encuentra 'TUERCA HEXAGONAL M10'",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: () =>
+    conColeccion(async () => {
+      const hits = await buscar("tuerca m10", SIN_INFIX);
+      assertEquals(
+        ids(hits),
+        ["tuerca"],
+        `'tuerca m10' no encontró la tuerca: ${resumen(hits)}`,
+      );
+    }),
+});
+
+Deno.test({
+  name: "Búsqueda exacta por código: primero el exacto vía codesExact",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: () =>
+    conColeccion(async () => {
+      const hits = await buscar("prn 002", SIN_INFIX, {
+        sort_by: sortApi("PRN-002"),
+      });
+      assertEquals(
+        ids(hits)[0],
+        "perno2",
+        `El código exacto no fue primero: ${resumen(hits)}`,
+      );
+    }),
+});
+
+Deno.test({
+  name: "Filtros: el filtro de la API excluye otra empresa y otro tipo",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: () =>
+    conColeccion(async () => {
+      for (const q of ["20069", "torn", "tornilo"]) {
         const hits = await buscar(q, INFIX_API, { sort_by: sortApi(q) });
         assert(
           !ids(hits).includes("ajeno"),
@@ -395,16 +451,26 @@ Deno.test({
 });
 
 Deno.test({
-  name: "Infix: la API declara el mismo filter_by en todas las búsquedas",
+  name: "Infix: usar infix sobre un campo sin infix responde 400",
   sanitizeResources: false,
   sanitizeOps: false,
   fn: () =>
     conColeccion(async () => {
-      const hits = await buscar("20069", INFIX_API);
-      assertEquals(
-        ids(hits).sort(),
-        ["e", "i", "m", "p", "pi"],
-        `Resultados inesperados con el filtro de la API: ${resumen(hits)}`,
+      let error: unknown;
+      try {
+        await buscar("exag", ["always", "always"], {
+          query_by: "codes,searchText",
+          query_by_weights: "4,1",
+          num_typos: "0,2",
+          prefix: "true,true",
+        });
+      } catch (e) {
+        error = e;
+      }
+      assert(
+        error,
+        "Typesense aceptó infix sobre searchText, que no declara infix",
       );
+      assertEquals((error as { httpStatus?: number }).httpStatus, 400);
     }),
 });

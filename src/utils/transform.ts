@@ -40,6 +40,21 @@ export function normalizeText(value?: string | null): string {
 }
 
 /**
+ * Solo para la descripción, y sin partir códigos: `PAE40123` daría `40` y
+ * traería todos los `PAE40xxx`; `(PAE20069)` daría `20069` exacto y superaría
+ * al producto cuyo código lo contiene. Las medidas (`M12X1.25`) tienen dígitos
+ * cortos, así que el límite de 4 dígitos las separa de los códigos.
+ */
+export function tokensSeparadosPorLetraDigito(texto?: string | null): string[] {
+  return normalizeText(texto)
+    .split(" ")
+    .filter((token) =>
+      /[a-z]/.test(token) && /\d/.test(token) && !/\d{4}/.test(token)
+    )
+    .flatMap((token) => token.match(/[a-z]+|\d+/g) ?? []);
+}
+
+/**
  * Codifica el valor como hex UTF-8 de `trim().toLowerCase()`. Typesense
  * tokeniza y quita símbolos también en `:=`, así que el valor debe ser opaco
  * (`sku-001` y `sku001` no pueden empatar).
